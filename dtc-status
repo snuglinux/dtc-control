@@ -1,0 +1,103 @@
+#!/bin/bash
+
+#pkg_dtc=`pacman -Qs dtc`
+#if [ -z "$pkg_dtc" ]; then
+#   pacman -S dtc
+#fi
+
+file_dts="$1"
+if [ -z "$file_dts" ]; then
+   echo "File not specified";
+   exit;
+fi
+
+NODES=
+OLD_SELECT_VALUE=1
+
+#====================================
+# cвойства узла
+# node       - node свойства которого нужно показать
+# value_node - фильтровать по этому значению свойства
+properties_node(){
+   local node value_node list_value;
+   node=$1;
+   value_node=$2;
+   list_value=`fdtget -p $file_dts $node | grep $value_node`
+   echo ${list_value[@]}
+}
+
+#====================================
+# выбрать node
+select_node(){
+   local str_read node_status list_nodes str_n status;
+
+   if [ -z "$NODES" ]; then
+      NODES="/"
+   elif [ ${NODES:(-1):1} == "/" ]; then
+      NODES="$NODES"
+   elif [ "$NODES" != "/" ]; then
+      NODES="$NODES/"
+   fi
+
+   str_n=0;
+   unset ARR_NODES
+   unset ARR_VALUES
+   unset ARR_MENU
+
+   list_nodes=`fdtget -l $file_dts $NODES`
+   total_val=( $list_nodes );
+   total_val=${#total_val[@]};
+   let bar_percent=100/$total_val;
+   bar_val=
+   for n in $list_nodes; do
+      let str_n=${str_n}+1;
+      if [[ `properties_node ${NODES}${n} "status"` == "status" ]]; then
+         status=`fdtget $file_dts ${NODES}${n} status`;
+         ARR_MENU[$str_n]="${str_n} ${n}-->($status)"
+         ARR_VALUES[${str_n}]=$n;
+      else
+         ARR_MENU[$str_n]="${str_n} ${n}"
+         ARR_NODES[${str_n}]=$n;
+      fi
+      let bar_val=$bar_val+$bar_percent;
+      export TERM=linux
+      echo $bar_val | whiptail --gauge "Data processing in progress" 10 50 $bar_val
+   done
+   if [ ${NODES} == "/" ]; then
+      cancel_button="exit";
+   else
+      cancel_button="back";
+   fi
+   select_value=$(whiptail --title "The program will help you change the status values for dtb files" \
+                           --menu "Make your choice" \
+                           --cancel-button $cancel_button \
+                           --default-item $OLD_SELECT_VALUE --clear 40 100 30 ${ARR_MENU[@]} 3>&1 1>&2 2>&3)
+   exitstatus=$?
+   OLD_SELECT_VALUE=$select_value
+   if [ $exitstatus = 0 ]; then
+      if [[ " ${!ARR_NODES[@]} " =~ " $select_value " ]]; then
+         NODES="${NODES}${ARR_NODES[$select_value]}"
+         OLD_SELECT_VALUE=1
+         select_node
+      elif [[ " ${!ARR_VALUES[@]} " =~ " $select_value " ]]; then
+          status=`fdtget $file_dts ${NODES}${ARR_VALUES[$select_value]} status`;
+          if [ $status == "disabled" ]; then
+             fdtput --type s $file_dts ${NODES}${ARR_VALUES[$select_value]} status "okay"
+          elif [ $status == "okay" ]; then
+             fdtput --type s $file_dts ${NODES}${ARR_VALUES[$select_value]} status "disabled"
+          fi
+          select_node
+      fi
+   else
+      if [ "${NODES}" == "/" ]; then
+         clear
+         exit;
+      fi
+      echo $NODES;
+      NODES="${NODES##*/}"
+      OLD_SELECT_VALUE=1
+      select_node
+   fi
+}
+
+select_node
